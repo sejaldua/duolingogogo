@@ -5,8 +5,8 @@ import duolingo
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.font_manager
-matplotlib.font_manager._rebuild()
-matplotlib.rcParams['font.family'] = ['Heiti TC']
+from datetime import timezone, timedelta
+matplotlib.rcParams['font.family'] = ['Source Han Sans CN']
 
 with open("duo_credentials.yaml", 'r') as stream:
     creds = yaml.safe_load(stream)
@@ -14,23 +14,47 @@ with open("duo_credentials.yaml", 'r') as stream:
 lingo  = duolingo.Duolingo(creds['username'], creds['password'])
 st.write("Hello :wave: " + lingo.get_user_info()['username'])
 
-st.header("Streak Info")
 streak = lingo.get_streak_info()
 xp = lingo.get_daily_xp_progress()
-st.write(str(streak['site_streak']) + " days")
-streak_pct = xp['xp_today'] / xp['xp_goal']
-streak_pct = streak_pct if streak_pct < 1 else 1.00
-st.write('Daily Streak Progress')
-st.progress(streak_pct)
 
 st.header("Calendar")
 cal = lingo.get_calendar('zs')
-calendar_df = pd.DataFrame.from_records(cal)
-calendar_df.sort_values(by='datetime', ascending=False, inplace=True)
-calendar_df['datetime'] = calendar_df['datetime'].apply(lambda x: pd.to_datetime(x, unit='ms').date())
-fig = plt.figure(figsize=(10,6))
-ax = sns.barplot(data=calendar_df, x='datetime', y='improvement', estimator=sum, ci=None)
+cal_df = pd.DataFrame.from_records(cal)
+# creating new datetime-based features
+# cal_df['timestamp'] = cal_df['datetime'].apply(lambda x: pytz.timezone("America/New_York").localize(pd.to_datetime(x, unit='ms'), is_dst=None))
+cal_df['timestamp'] = cal_df['datetime'].apply(lambda x: pd.to_datetime(x, unit='ms') - timedelta(hours=4))
+cal_df['year'] = cal_df.timestamp.dt.year
+cal_df['month'] = cal_df.timestamp.dt.month
+cal_df['hour'] = cal_df.timestamp.dt.hour
+cal_df['weekday'] = cal_df.timestamp.dt.day_name()
+cal_df['week_num'] = cal_df['timestamp'].apply(lambda x: x.isocalendar()[1] % 52)
+
+# get weekday_num in order of MTWTFSS because we want to sort the rows of the heatmap in order
+weekday_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+mapping = {k: v for k, v in zip(weekday_order, [i+1 for i in range(7)])}
+cal_df['weekday_num'] = cal_df['weekday'].apply(lambda x: mapping[x])
+# st.dataframe(cal_df)
+
+df_to_pivot = cal_df[['week_num', 'weekday_num', 'improvement']]
+pivoted_data = pd.pivot_table(df_to_pivot, values='improvement', index=['weekday_num'], columns=['week_num'], aggfunc=sum)
+pivoted_data = pivoted_data.reindex([i+1 for i in range(max(pivoted_data.columns))], axis=1)
+pivoted_data.dropna(axis=1, how='all', inplace=True)
+# st.dataframe(pivoted_data)
+
+fig = plt.figure(figsize=(6,4));
+sns.heatmap(pivoted_data, linewidths=6, cmap='BuGn', cbar=True,
+                 linecolor='white', square=True, yticklabels=weekday_order);
+            # xticklabels=[*space, 'Jan', *space, 'Feb', *space, 'Mar', *space, 'Apr', 
+                        #  *space, 'May', *space, 'Jun', *space, 'Jul']);
+plt.ylabel("");
+plt.xlabel("");
 st.write(fig)
+
+# cal_df.sort_values(by='datetime', ascending=False, inplace=True)
+# cal_df['datetime'] = cal_df['datetime'].apply(lambda x: pd.to_datetime(x, unit='ms').date())
+# fig = plt.figure(figsize=(10,6))
+# ax = sns.barplot(data=cal_df, x='datetime', y='improvement', estimator=sum, ci=None)
+# st.write(fig)
 
 st.header("Language Details")
 ld = lingo.get_language_details('Chinese')
@@ -47,19 +71,3 @@ st.write(', '.join(lingo.get_known_topics('zs')))
 
 st.header('Known Words')
 st.write(', '.join(lingo.get_known_words('zs')))
-
-vocab = lingo.get_vocabulary()
-vocab_data = []
-for word in vocab['vocab_overview']:
-    vocab_data.append([word['normalized_string'].strip(), word['word_string'], word['strength'], word['skill_url_title']])
-vocab_df = pd.DataFrame(vocab_data, columns=['word', 'character', 'strength', 'skill'])
-vocab_df.sort_values(by='strength', inplace=True)
-fig = plt.figure(figsize=(15,20))
-ax = sns.barplot(x="strength", y="character", data=vocab_df.iloc[:20],
-                 hue='skill', ci=None)
-plt.xticks(fontsize=20);
-plt.yticks(fontsize=20);
-plt.xlabel('character', fontsize=20);
-plt.ylabel('strength', fontsize=20);
-plt.legend(fontsize=16);
-st.write(fig)
